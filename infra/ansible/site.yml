@@ -1,0 +1,133 @@
+---
+- name: Configurar la instancia de MJ
+  hosts: portfolio
+  become: true
+  vars:
+    project_dir: /opt/mj
+    enable_vnc: false
+  tasks:
+    - name: Verificar parámetros
+      ansible.builtin.assert:
+        that:
+          - admin_cidr is match('^[0-9.]+/32$')
+          - portfolio_domain is match('^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$')
+          - portfolio_repository is match('^[a-z0-9][a-z0-9_-]*/mj-portfolio$')
+
+    - name: Instalar Git, Caddy y herramientas del sistema
+      ansible.builtin.apt:
+        name: [git, caddy, curl, ca-certificates, ufw, iptables, python3-debian]
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Crear directorio de claves APT
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Descargar la clave oficial de Docker
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Añadir el repositorio oficial de Docker
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: [deb]
+        uris: https://download.docker.com/linux/ubuntu
+        suites: "{{ ansible_facts.distribution_release }}"
+        components: [stable]
+        architectures: [amd64]
+        signed_by: /etc/apt/keyrings/docker.asc
+      register: docker_repository
+
+    - name: Instalar Docker Engine y Docker Compose
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
+        update_cache: "{{ docker_repository.changed }}"
+
+    - name: Activar los servicios Docker y AWS Systems Manager
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - docker
+        - snap.amazon-ssm-agent.amazon-ssm-agent.service
+
+    - name: Instalar escritorio y VNC opcionales
+      ansible.builtin.apt:
+        name: [xfce4, tigervnc-standalone-server, dbus-x11]
+        install_recommends: false
+      when: enable_vnc | bool
+
+    - name: Permitir SSH administrativo y HTTP/HTTPS en el firewall iptables de UFW
+      ansible.builtin.command: "ufw allow from {{ item.source }} to any port {{ item.port }} proto tcp"
+      loop:
+        - { source: "{{ admin_cidr }}", port: 22 }
+        - { source: any, port: 80 }
+        - { source: any, port: 443 }
+      register: firewall_rule
+      changed_when: "'Rule added' in firewall_rule.stdout"
+
+    - name: Bloquear el tráfico entrante por defecto
+      ansible.builtin.command: ufw default deny incoming
+      register: firewall_default
+      changed_when: "'changed' in firewall_default.stdout"
+
+    - name: Activar UFW
+      ansible.builtin.command: ufw --force enable
+      register: firewall_status
+      changed_when: "'enabled' in firewall_status.stdout"
+
+    - name: Crear directorio de despliegue
+      ansible.builtin.file:
+        path: "{{ project_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copiar Docker Compose
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../compose.yml"
+        dest: "{{ project_dir }}/compose.yml"
+        mode: "0644"
+
+    - name: Registrar el repositorio de Docker Hub
+      ansible.builtin.copy:
+        content: "{{ portfolio_repository }}\n"
+        dest: "{{ project_dir }}/repository"
+        mode: "0644"
+
+    - name: Inicializar imagen para el primer despliegue
+      ansible.builtin.copy:
+        content: "PORTFOLIO_IMAGE={{ portfolio_repository }}:latest\n"
+        dest: "{{ project_dir }}/.env"
+        mode: "0644"
+        force: false
+
+    - name: Instalar el comando de despliegue
+      ansible.builtin.copy:
+        src: deploy.sh
+        dest: /usr/local/sbin/mj-portfolio-deploy
+        mode: "0755"
+
+    - name: Configurar Caddy para HTTPS y proxy al contenedor
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        mode: "0644"
+        validate: "caddy validate --config %s --adapter caddyfile"
+      notify: Recargar Caddy
+
+    - name: Mantener Caddy activo
+      ansible.builtin.systemd_service:
+        name: caddy
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Recargar Caddy
+      ansible.builtin.systemd_service:
+        name: caddy
+        state: reloaded

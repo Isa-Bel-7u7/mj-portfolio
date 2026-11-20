@@ -1,0 +1,7 @@
+region            = "us-east-1"
+instance_type     = "t3.small"
+admin_cidr        = "TU_IP_PUBLICA/32"
+ssh_public_key    = "ssh-ed25519 PEGA_AQUI_TU_CLAVE_PUBLICA"
+github_repository = "TU_USUARIO/TU_REPOSITORIO"
+# Solo si tu cuenta AWS ya tiene un proveedor de identidad OIDC para GitHub:
+# github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"

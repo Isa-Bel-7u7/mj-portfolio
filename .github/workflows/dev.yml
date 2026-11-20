@@ -1,0 +1,27 @@
+name: Pruebas automatizadas
+on:
+  push:
+    branches: [dev]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Instalar dependencias
+        run: if test -f package-lock.json; then npm ci; else npm install; fi
+      - run: npm run test:unit
+      - run: npm run test:integration
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: test-results/
+          if-no-files-found: ignore

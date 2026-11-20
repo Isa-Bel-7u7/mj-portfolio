@@ -1,0 +1,119 @@
+[
+  {
+    "slug": "gestion-hotelera",
+    "title": "Sistema de gestión hotelera",
+    "type": "Sistema multiplataforma",
+    "status": "Proyecto académico",
+    "summary": "Una plataforma web y móvil con espacios de trabajo distintos para administración, clientes y personal.",
+    "problem": "Cada perfil necesita operar sobre la misma información del hotel desde interfaces y permisos acordes con sus responsabilidades.",
+    "goal": "Centralizar la información y ofrecer una experiencia de trabajo propia para cada rol.",
+    "features": [
+      "Autenticación y gestión de roles",
+      "Navegación, vistas y permisos diferenciados",
+      "Aplicación web y aplicación móvil",
+      "Información centralizada en la nube"
+    ],
+    "architecture": [
+      "Administrador · Cliente · Personal",
+      "Interfaces con navegación y permisos por rol",
+      "Plataforma web y aplicación móvil",
+      "Servicios y lógica del sistema",
+      "Base de datos en la nube"
+    ],
+    "technologies": [],
+    "participation": "Desarrollo académico de la solución. Alcance individual pendiente de detallar."
+  },
+  {
+    "slug": "hospital-veterinario",
+    "title": "Gestión para hospital veterinario",
+    "type": "Diseño de sistemas",
+    "status": "En diseño y desarrollo",
+    "summary": "Una solución para organizar pacientes veterinarios, clientes, empleados y administración.",
+    "problem": "La información clínica y operativa requiere una estructura común para facilitar la gestión del hospital.",
+    "goal": "Centralizar los datos y facilitar el acceso a los distintos módulos operativos.",
+    "features": [
+      "Gestión de pacientes veterinarios",
+      "Clientes y empleados",
+      "Módulo de administración",
+      "Integración entre aplicaciones"
+    ],
+    "architecture": [
+      "Interfaces de gestión",
+      "Casos de uso",
+      "Dominio y repositorios",
+      "Persistencia centralizada"
+    ],
+    "technologies": [
+      "React Native",
+      "Node.js",
+      "Supabase",
+      "PostgreSQL",
+      "Android Studio",
+      "Clean Architecture",
+      "SOLID",
+      "DRY",
+      "KISS",
+      "YAGNI"
+    ],
+    "participation": "Diseño y desarrollo académico del sistema."
+  },
+  {
+    "slug": "pipeline-de-tareas",
+    "title": "Pipeline de procesamiento de tareas",
+    "type": "Arquitectura de software",
+    "status": "Proyecto académico",
+    "summary": "Procesamiento modular y secuencial de tareas mediante Pipe & Filter y Broker.",
+    "problem": "El registro de una tarea requiere varias transformaciones antes de persistirla.",
+    "goal": "Desacoplar las etapas para reutilizarlas y asignarles responsabilidades claras.",
+    "features": [
+      "Registro y edición de tareas",
+      "Asignación de responsables",
+      "Administración de estados",
+      "Procesamiento modular y secuencial"
+    ],
+    "architecture": [
+      "TextNormalization",
+      "Validation",
+      "PriorityDetection",
+      "CategoryDetection",
+      "MetadataEnrichment",
+      "Persistence"
+    ],
+    "technologies": [
+      "Pipe & Filter",
+      "Broker Pattern",
+      "PostgreSQL",
+      "Supabase"
+    ],
+    "participation": "Diseño académico del flujo y de las etapas de procesamiento."
+  },
+  {
+    "slug": "redes-cisco",
+    "title": "Configuración y seguridad de redes Cisco",
+    "type": "Infraestructura de red",
+    "status": "Práctica de laboratorio",
+    "summary": "Configuración de redes LAN, direccionamiento IPv4 y seguridad de puertos en entornos simulados.",
+    "problem": "Una LAN necesita direccionamiento coherente, conectividad verificable y control de acceso en los switches.",
+    "goal": "Configurar y diagnosticar una red LAN de laboratorio con dispositivos Cisco.",
+    "features": [
+      "IPv4 y DHCPv4",
+      "Configuración de switches y redes LAN",
+      "Port Security y seguridad de LAN",
+      "Verificación y diagnóstico de conectividad"
+    ],
+    "architecture": [
+      "Dispositivos finales",
+      "Switches de acceso con Port Security",
+      "Servicios DHCPv4",
+      "Verificación con Cisco IOS"
+    ],
+    "technologies": [
+      "Cisco Packet Tracer",
+      "CLI de Cisco IOS",
+      "TCP/IP",
+      "IPv4",
+      "DHCPv4"
+    ],
+    "participation": "Configuración y diagnóstico en prácticas académicas de laboratorio."
+  }
+]

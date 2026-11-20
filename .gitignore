@@ -1,0 +1,14 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+data/
+.env
+.terraform/
+*.tfstate*
+*.tfplan
+*.tfvars
+inventory.ini
+*.retry
+*.pem
+infra/ansible/vars.yml

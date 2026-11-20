@@ -1,0 +1,4 @@
+admin_cidr: "TU_IP_PUBLICA/32"
+portfolio_domain: "portafolio.tudominio.com"
+portfolio_repository: "TU_USUARIO_DOCKERHUB/mj-portfolio"
+enable_vnc: false
