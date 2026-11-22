@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_oci:
+        description: Ejecutar el despliegue en Oracle Cloud en esta ejecución
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -48,14 +53,29 @@ jobs:
             ${{ env.DOCKERHUB_USERNAME }}/mj-portfolio:${{ github.sha }}
   deploy:
     needs: publish
-    if: vars.OCI_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
+      - name: Comprobar activación del despliegue
+        id: deployment
+        env:
+          OCI_DEPLOY_ENABLED: ${{ vars.OCI_DEPLOY_ENABLED }}
+          DEPLOY_REQUESTED: ${{ inputs.deploy_oci }}
+        run: |
+          if [[ "${DEPLOY_REQUESTED}" == true || "${OCI_DEPLOY_ENABLED,,}" == true ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          elif [[ -z "$OCI_DEPLOY_ENABLED" ]]; then
+            echo "::notice::GitHub no entregó la variable de repositorio OCI_DEPLOY_ENABLED. El despliegue no se ejecutará."
+          else
+            echo "::notice::OCI_DEPLOY_ENABLED no tiene el valor true. El despliegue no se ejecutará."
+          fi
       - uses: actions/checkout@v4
+        if: steps.deployment.outputs.enabled == 'true'
       - name: Instalar OCI CLI
+        if: steps.deployment.outputs.enabled == 'true'
         run: pipx install oci-cli
       - name: Desplegar la imagen por digest en Oracle Cloud
+        if: steps.deployment.outputs.enabled == 'true'
         env:
           OCI_REGION: ${{ vars.OCI_REGION }}
           OCI_COMPARTMENT_ID: ${{ vars.OCI_COMPARTMENT_ID }}
