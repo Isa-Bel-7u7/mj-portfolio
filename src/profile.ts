@@ -3,7 +3,7 @@ export const profile = {
   program: '',
   university: '',
   email: '',
-  github: '',
+  github: 'https://github.com/Isa-Bel-7u7',
   linkedin: '',
   learning: [] as string[],
 }
