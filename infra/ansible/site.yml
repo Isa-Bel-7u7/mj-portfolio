@@ -5,6 +5,7 @@
   vars:
     project_dir: /opt/mj
     enable_vnc: false
+    enable_oci_run_command: false
   tasks:
     - name: Verificar parámetros
       ansible.builtin.assert:
@@ -38,7 +39,7 @@
         uris: https://download.docker.com/linux/ubuntu
         suites: "{{ ansible_facts.distribution_release }}"
         components: [stable]
-        architectures: [amd64]
+        architectures: ["{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture] }}"]
         signed_by: /etc/apt/keyrings/docker.asc
       register: docker_repository
 
@@ -47,14 +48,11 @@
         name: [docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin]
         update_cache: "{{ docker_repository.changed }}"
 
-    - name: Activar los servicios Docker y AWS Systems Manager
+    - name: Activar Docker
       ansible.builtin.systemd_service:
-        name: "{{ item }}"
+        name: docker
         state: started
         enabled: true
-      loop:
-        - docker
-        - snap.amazon-ssm-agent.amazon-ssm-agent.service
 
     - name: Instalar escritorio y VNC opcionales
       ansible.builtin.apt:
@@ -111,6 +109,17 @@
         src: deploy.sh
         dest: /usr/local/sbin/mj-portfolio-deploy
         mode: "0755"
+
+    - name: Permitir al agente de OCI ejecutar únicamente el despliegue por digest
+      ansible.builtin.copy:
+        content: |
+          ocarun ALL=(root) NOPASSWD: /usr/local/sbin/mj-portfolio-deploy ^sha256\\:[a-f0-9]{64}$
+        dest: /etc/sudoers.d/90-mj-oci-deploy
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+      when: enable_oci_run_command | bool
 
     - name: Configurar Caddy para HTTPS y proxy al contenedor
       ansible.builtin.template:
