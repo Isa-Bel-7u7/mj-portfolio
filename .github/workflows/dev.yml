@@ -2,6 +2,7 @@ name: Pruebas automatizadas
 on:
   push:
     branches: [dev]
+  workflow_call:
 permissions:
   contents: read
 jobs:

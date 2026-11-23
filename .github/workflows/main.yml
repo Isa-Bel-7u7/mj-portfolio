@@ -10,13 +10,17 @@ concurrency:
   cancel-in-progress: false
   queue: max
 jobs:
+  tests:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/dev.yml
   publish:
     if: github.ref == 'refs/heads/main'
+    needs: tests
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
     env:
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - name: Comprobar configuración de Docker Hub
@@ -37,8 +41,8 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - id: build
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
+        id: image
         with:
           context: .
           push: true
@@ -48,37 +52,59 @@ jobs:
             ${{ env.DOCKERHUB_USERNAME }}/mj-portfolio:${{ github.sha }}
   deploy:
     needs: publish
-    if: vars.OCI_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    runs-on: [self-hosted, linux, portfolio-oci]
+    environment: production
+    timeout-minutes: 45
+    env:
+      TF_IN_AUTOMATION: 'true'
+      OCI_STATE_PATH: ${{ vars.OCI_STATE_PATH }}
+      OCI_VM_HOST: ${{ vars.OCI_VM_HOST }}
+      PORTFOLIO_DOMAIN: ${{ vars.PORTFOLIO_DOMAIN }}
+      PORTFOLIO_ADMIN_CIDR: ${{ vars.PORTFOLIO_ADMIN_CIDR }}
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
+      PORTFOLIO_DIGEST: ${{ needs.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar OCI CLI
-        run: pipx install oci-cli
-      - name: Desplegar la imagen por digest en Oracle Cloud
-        env:
-          OCI_REGION: ${{ vars.OCI_REGION }}
-          OCI_COMPARTMENT_ID: ${{ vars.OCI_COMPARTMENT_ID }}
-          OCI_INSTANCE_ID: ${{ vars.OCI_INSTANCE_ID }}
-          OCI_TENANCY: ${{ vars.OCI_TENANCY }}
-          OCI_USER: ${{ vars.OCI_USER }}
-          OCI_FINGERPRINT: ${{ vars.OCI_FINGERPRINT }}
-          OCI_API_PRIVATE_KEY: ${{ secrets.OCI_API_PRIVATE_KEY }}
-          IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+        with:
+          persist-credentials: false
+      - name: Verificar configuración del despliegue
+        shell: bash
         run: |
-          set -euo pipefail
-          for key in OCI_REGION OCI_COMPARTMENT_ID OCI_INSTANCE_ID OCI_TENANCY OCI_USER OCI_FINGERPRINT OCI_API_PRIVATE_KEY; do
-            if [[ -z "${!key}" ]]; then
-              echo "::error::Falta configurar $key."
-              exit 1
-            fi
-          done
+          [[ "$OCI_STATE_PATH" = /* && -s "$OCI_STATE_PATH" ]]
+          [[ "$OCI_VM_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$PORTFOLIO_DOMAIN" =~ ^[a-z0-9][a-z0-9.-]*\.[a-z]{2,63}$ ]]
+          [[ "$PORTFOLIO_ADMIN_CIDR" =~ ^[0-9.]+/32$ ]]
+          [[ "$PORTFOLIO_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+      - name: Aplicar Terraform en OCI
+        shell: bash
+        working-directory: infra/terraform-oci-stack
+        run: |
           umask 077
-          config_dir=$(mktemp -d)
-          trap 'rm -rf "$config_dir"' EXIT
-          printf '%s\n' "$OCI_API_PRIVATE_KEY" > "$config_dir/key.pem"
-          unset OCI_API_PRIVATE_KEY
-          printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' \
-            "$OCI_USER" "$OCI_FINGERPRINT" "$OCI_TENANCY" "$OCI_REGION" "$config_dir/key.pem" > "$config_dir/config"
-          export OCI_CLI_CONFIG_FILE="$config_dir/config"
-          bash infra/oci/deploy.sh
+          plan_dir=$(mktemp -d)
+          trap 'rm -f "$plan_dir/oci.tfplan"; rmdir "$plan_dir"' EXIT
+          terraform init -input=false -reconfigure -backend-config="path=$OCI_STATE_PATH"
+          terraform validate
+          terraform state list | grep -Fx 'oci_core_instance.generated_oci_core_instance'
+          terraform plan -input=false -lock-timeout=5m -out="$plan_dir/oci.tfplan"
+          terraform show -json "$plan_dir/oci.tfplan" |
+            jq -e 'all(.resource_changes[]?; (.change.actions | index("delete")) == null)' >/dev/null
+          terraform apply -input=false -lock-timeout=5m "$plan_dir/oci.tfplan"
+      - name: Configurar la VM y desplegar la imagen con Ansible
+        shell: bash
+        env:
+          PORTFOLIO_VNC_PASSWORD: ${{ secrets.PORTFOLIO_VNC_PASSWORD }}
+        run: |
+          [[ "$PORTFOLIO_VNC_PASSWORD" =~ ^[[:graph:]]{8}$ ]]
+          umask 077
+          inventory=$(mktemp)
+          trap 'rm -f "$inventory"' EXIT
+          printf '[portfolio]\nportfolio ansible_host=%s ansible_user=ubuntu\n' "$OCI_VM_HOST" > "$inventory"
+          variables=$(jq -cn \
+            --arg domain "$PORTFOLIO_DOMAIN" \
+            --arg cidr "$PORTFOLIO_ADMIN_CIDR" \
+            --arg repository "$DOCKERHUB_USERNAME/mj-portfolio" \
+            --arg digest "$PORTFOLIO_DIGEST" \
+            '{portfolio_domain:$domain, admin_cidr:$cidr, portfolio_repository:$repository, portfolio_deploy_digest:$digest, enable_vnc:true}')
+          ANSIBLE_HOST_KEY_CHECKING=True ansible-playbook -i "$inventory" infra/ansible/site.yml -e "$variables"
+      - name: Verificar el dominio público por HTTPS
+        run: curl --fail --silent --show-error --retry 8 --retry-all-errors --max-time 15 "https://$PORTFOLIO_DOMAIN/api/health"
