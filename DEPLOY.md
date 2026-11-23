@@ -1,6 +1,40 @@
 # Despliegue del portafolio MJ
 
-El aprovisionamiento de AWS, la primera ejecución de Ansible y la activación del dominio se hacen desde tus cuentas. Después del alta inicial, los pushes a `main` actualizan el contenedor en la VM existente. AWS puede facturar EC2, EBS, IPv4 pública y transferencia. Revisa tus tarifas y presupuesto antes de crear recursos.
+## Desplegar en Oracle Cloud
+
+Cada push a `main` ejecuta las pruebas, publica la imagen en Docker Hub y ejecuta Terraform y Ansible desde un runner Linux de GitHub Actions con la etiqueta `portfolio-oci`. Ansible instala VNC y despliega el digest generado por ese mismo workflow. El último paso consulta `/api/health` por HTTPS.
+
+### Preparar el entorno `production` de GitHub Actions
+
+Registra un runner Linux dedicado a este repositorio con la etiqueta `portfolio-oci`, Terraform, `jq`, `curl`, OpenSSH y `ansible-core` 2.15 o posterior. Su usuario necesita credenciales OCI para el stack y acceso SSH verificado como `ubuntu`. Configura la clave privada en el usuario del runner y registra en `known_hosts` la clave pública de host comprobada en la consola de esa VM. La IP de salida del runner debe estar permitida para SSH en OCI y UFW.
+
+| Tipo | Nombre | Valor |
+| --- | --- | --- |
+| Variable | `OCI_STATE_PATH` | Ruta absoluta y persistente al estado de Terraform del stack OCI, fuera del checkout. |
+| Variable | `OCI_VM_HOST` | IP pública o nombre DNS directo de la VM para SSH. |
+| Variable | `PORTFOLIO_ADMIN_CIDR` | IPv4 de salida autorizada en UFW, con `/32`. |
+| Variable | `PORTFOLIO_DOMAIN` | Nombre público de Cloudflare que sirve el portafolio por HTTPS. |
+| Secreto | `PORTFOLIO_VNC_PASSWORD` | Contraseña de ocho caracteres ASCII imprimibles sin espacios. |
+
+Configura las credenciales de Docker Hub a nivel del repositorio para el job de publicación. Si el estado actual está en OCI Resource Manager, conserva una copia, verifica que las direcciones de recursos coincidan con el código y migra el estado al runner antes del primer despliegue. A partir de la migración, usa ese estado para aplicar cambios. El job requiere que el estado ya incluya la VM y detiene planes que eliminan o reemplazan recursos.
+
+GitHub Actions publica la imagen de cada push a `main` en Docker Hub. En la VM existente, Ansible instala un temporizador de systemd que consulta `latest` cada cinco minutos. Si cambia el digest, el script aplica la imagen y registra el resultado. Si la imagen falla y existe un digest anterior, lo restaura.
+
+1. Usa la IP pública de `mj-portafolio-vm` en el inventario de Ansible y en el registro A de Cloudflare.
+2. Configura `portfolio_domain`, `admin_cidr` y `portfolio_repository` en `vars.yml`. El repositorio de Docker Hub debe ser público. Para VNC, activa `enable_vnc: true`.
+3. Desde Linux o WSL ejecuta el playbook de la sección 4. El temporizador queda habilitado también después de reiniciar la VM.
+4. Para probar de inmediato desde la VM, ejecuta los siguientes comandos.
+
+```bash
+sudo systemctl start mj-portfolio-update.service
+sudo journalctl -u mj-portfolio-update.service -n 40 --no-pager
+systemctl list-timers mj-portfolio-update.timer
+curl --fail http://127.0.0.1:3000/api/health
+```
+
+Comprueba también `https://TU_DOMINIO/api/health`. GitHub registra la publicación de la imagen. El diario de systemd registra su aplicación en la VM.
+
+Las secciones de AWS describen el aprovisionamiento anterior. Para la infraestructura de Oracle, consulta `infra/terraform-oci-stack` si dispones de la exportación del stack.
 
 ## 1. Docker Hub y GitHub
 
@@ -24,7 +58,7 @@ git switch -c main
 git push -u origin main
 ```
 
-En el primer push a `main`, GitHub publica `TU_USUARIO_DOCKERHUB/mj-portfolio:latest` y una etiqueta con el SHA del commit. El trabajo de despliegue queda pendiente de la configuración de AWS.
+Cuando pasan las pruebas unitarias, de integración y de navegador en `main`, GitHub publica `TU_USUARIO_DOCKERHUB/mj-portfolio:latest` y una etiqueta con el SHA del commit. La VM de OCI aplica la imagen cuando está habilitado el temporizador.
 
 ## 2. Crear la VM con Terraform
 
@@ -73,7 +107,7 @@ cp inventory.example.ini inventory.ini
 cp vars.example.yml vars.yml
 ```
 
-Completa `inventory.ini` con la IP de Terraform. En `vars.yml` escribe tu mismo CIDR, el nombre completo de Cloudflare y el nombre del repositorio de Docker Hub. Activa `enable_vnc: true` si necesitas escritorio.
+Completa `inventory.ini` con la IP pública de la VM de OCI. Ajusta `ansible_ssh_private_key_file` para que apunte a la clave privada que corresponde a esa VM. En `vars.yml` escribe tu mismo CIDR, el nombre completo de Cloudflare y el nombre del repositorio de Docker Hub. Activa `enable_vnc: true` si necesitas escritorio.
 
 ```bash
 ssh -i ~/.ssh/mj-portfolio ubuntu@IP_PUBLICA
@@ -95,11 +129,7 @@ Verifica el certificado con `curl --fail https://portafolio.tudominio.com/api/he
 
 ### Escritorio VNC por SSH
 
-Con `enable_vnc: true` en Ansible, conéctate a la VM como `ubuntu` y crea la contraseña de VNC cuando se te solicite. Inicia XFCE en la pantalla `:1`.
-
-```bash
-tigervncserver :1 -localhost yes -xstartup /usr/bin/startxfce4
-```
+Con `enable_vnc: true`, Ansible instala y habilita `mj-portfolio-vnc.service`, que inicia XFCE en la pantalla `:1`. Para ejecuciones manuales del playbook, proporciona `PORTFOLIO_VNC_PASSWORD` en el entorno del controlador antes de ejecutarlo. Puedes comprobar el servicio mediante `systemctl status mj-portfolio-vnc.service` en la VM.
 
 En otra terminal de tu equipo abre el túnel, mantenlo activo y conecta tu cliente VNC a `127.0.0.1:5901`.
 
@@ -107,20 +137,14 @@ En otra terminal de tu equipo abre el túnel, mantenlo activo y conecta tu clien
 ssh -i ~/.ssh/mj-portfolio -N -L 5901:127.0.0.1:5901 ubuntu@IP_PUBLICA
 ```
 
-El puerto 5901 vive en loopback de la VM. Para cerrar el escritorio ejecuta `tigervncserver -kill :1` dentro de la VM. Cierra la terminal del túnel cuando termines.
+El puerto 5901 vive en loopback de la VM. Conéctate con la contraseña de VNC configurada. Cierra la terminal del túnel al terminar.
 
-## 5. Activar despliegues automáticos
+## 5. Verificar un despliegue automático en OCI
 
-1. En **AWS Systems Manager → Fleet Manager**, comprueba que la instancia aparece en línea. Para la interpolación de parámetros, se necesita SSM Agent 3.3.2746.0 o posterior. En la VM revisa `snap list amazon-ssm-agent` y actualízalo con `sudo snap refresh amazon-ssm-agent` si hace falta. [Requisitos del agente](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-troubleshooting.html).
-2. En **GitHub → Settings → Secrets and variables → Actions → Variables**, registra las salidas de Terraform.
+1. En **GitHub Actions**, abre **Publicar y desplegar** y ejecútalo sobre `main`, o revisa la ejecución del último push. El job de publicación debe terminar correctamente y Docker Hub debe mostrar las etiquetas `latest` y la del SHA.
+2. En la VM, revisa el temporizador y el diario con los comandos de la sección de Oracle Cloud. Para inspeccionar el contenedor activo, ejecuta `sudo docker compose --project-directory /opt/mj ps`.
+3. Abre `https://TU_DOMINIO/api/health` y un detalle de proyecto para comprobar el acceso público.
 
-| Variable de GitHub | Salida de Terraform |
-| --- | --- |
-| `AWS_DEPLOY_ROLE_ARN` | `github_deploy_role_arn` |
-| `AWS_INSTANCE_ID` | `instance_id` |
-| `AWS_REGION` | `region` |
-
-3. En **Actions → Publicar y desplegar**, ejecútalo manualmente sobre `main` para comprobar la integración. Luego revisa el resultado del próximo push. El workflow asume por OIDC un rol limitado al repositorio, rama, documento SSM e instancia configurados. Las credenciales estáticas de AWS no hacen falta en GitHub.
-4. Comprueba `https://portafolio.tudominio.com/api/health` y abre un detalle de proyecto. En la VM, `sudo docker compose --project-directory /opt/mj ps` muestra el contenedor activo. El script puede recuperar la versión anterior cuando la nueva no supera su comprobación de salud.
+### Retirar la infraestructura de AWS
 
 Si dejas de usar la infraestructura, revisa `terraform plan -destroy` y ejecuta `terraform destroy` cuando estés lista para eliminarla. Esto borra la VM, su disco y el volumen SQLite de esa VM. Retira el registro DNS correspondiente en Cloudflare.

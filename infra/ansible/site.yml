@@ -2,11 +2,18 @@
 - name: Configurar la instancia de MJ
   hosts: portfolio
   become: true
+  gather_facts: false
   vars:
     project_dir: /opt/mj
     enable_vnc: false
     enable_oci_run_command: false
   tasks:
+    - name: Esperar la conexión SSH
+      ansible.builtin.wait_for_connection:
+
+    - name: Recopilar información de la VM
+      ansible.builtin.setup:
+
     - name: Verificar parámetros
       ansible.builtin.assert:
         that:
@@ -59,6 +66,61 @@
         name: [xfce4, tigervnc-standalone-server, dbus-x11]
         install_recommends: false
       when: enable_vnc | bool
+
+    - name: Configurar el escritorio VNC
+      when: enable_vnc | bool
+      block:
+        - name: Crear el directorio de credenciales de VNC
+          ansible.builtin.file:
+            path: /etc/mj-vnc
+            state: directory
+            owner: ubuntu
+            group: ubuntu
+            mode: "0700"
+
+        - name: Validar la contraseña de VNC
+          ansible.builtin.assert:
+            that: lookup('ansible.builtin.env', 'PORTFOLIO_VNC_PASSWORD') is match('^[!-~]{8}$')
+          no_log: true
+
+        - name: Guardar la contraseña de VNC
+          ansible.builtin.shell: |
+            set -euo pipefail
+            umask 077
+            password_file=$(mktemp /etc/mj-vnc/passwd.XXXXXX)
+            trap 'rm -f "$password_file"' EXIT
+            printf '%s\n' "$VNC_PASSWORD" | /usr/bin/tigervncpasswd -f > "$password_file"
+            if ! cmp -s "$password_file" /etc/mj-vnc/passwd; then
+              install -o ubuntu -g ubuntu -m 0600 "$password_file" /etc/mj-vnc/passwd
+              printf 'updated\n'
+            fi
+          args:
+            executable: /bin/bash
+          environment:
+            VNC_PASSWORD: "{{ lookup('ansible.builtin.env', 'PORTFOLIO_VNC_PASSWORD') }}"
+          register: vnc_password_file
+          changed_when: vnc_password_file.stdout == 'updated'
+          no_log: true
+
+        - name: Instalar el servicio VNC
+          ansible.builtin.copy:
+            src: mj-portfolio-vnc.service
+            dest: /etc/systemd/system/mj-portfolio-vnc.service
+            mode: "0644"
+          register: vnc_unit
+
+        - name: Activar TigerVNC en loopback
+          ansible.builtin.systemd_service:
+            name: mj-portfolio-vnc.service
+            daemon_reload: "{{ vnc_unit.changed }}"
+            enabled: true
+            state: "{{ 'restarted' if vnc_unit.changed else 'started' }}"
+
+        - name: Comprobar que VNC escucha en loopback
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: 5901
+            timeout: 45
 
     - name: Permitir SSH administrativo y HTTP/HTTPS en el firewall iptables de UFW
       ansible.builtin.command: "ufw allow from {{ item.source }} to any port {{ item.port }} proto tcp"
@@ -134,6 +196,40 @@
         name: caddy
         enabled: true
         state: started
+
+    - name: Instalar unidades de actualización automática
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - mj-portfolio-update.service
+        - mj-portfolio-update.timer
+      register: portfolio_update_units
+
+    - name: Activar la actualización automática desde Docker Hub
+      ansible.builtin.systemd_service:
+        name: mj-portfolio-update.timer
+        daemon_reload: "{{ portfolio_update_units.changed }}"
+        enabled: true
+        state: "{{ 'restarted' if portfolio_update_units.changed else 'started' }}"
+
+    - name: Desplegar el digest publicado por GitHub Actions
+      ansible.builtin.command:
+        argv:
+          - /usr/local/sbin/mj-portfolio-deploy
+          - "{{ portfolio_deploy_digest }}"
+      register: portfolio_deployment
+      changed_when: "'Imagen activa:' in portfolio_deployment.stdout"
+      when: portfolio_deploy_digest is defined
+
+    - name: Comprobar la salud del portafolio en la VM
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/health
+        status_code: 200
+      when: portfolio_deploy_digest is defined
 
   handlers:
     - name: Recargar Caddy

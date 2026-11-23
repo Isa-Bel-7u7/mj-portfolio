@@ -1,0 +1,14 @@
+[Unit]
+Description=Escritorio XFCE del portafolio por TigerVNC
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=~
+ExecStart=/usr/bin/tigervncserver :1 -fg -localhost yes -SecurityTypes VncAuth -PasswordFile /etc/mj-vnc/passwd -xstartup /usr/bin/startxfce4
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Consultar nuevas versiones del portafolio
+
+[Timer]
+OnActiveSec=15s
+OnUnitInactiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
